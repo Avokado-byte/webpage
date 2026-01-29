@@ -1,3 +1,9 @@
+// detector.js (con debug)
+// Requisitos en el repo:
+// - detector.html (carga ort.min.js + este archivo)
+// - assets/best.onnx (modelo)
+// URL esperada del modelo: https://avokado-byte.github.io/webpage/assets/best.onnx
+
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -6,45 +12,83 @@ const btnStart = document.getElementById("btnStart");
 const btnStop = document.getElementById("btnStop");
 
 const MODEL_URL = "./assets/best.onnx";
-const INPUT_SIZE = 512;          // usa el mismo imgsz con que exportaste
-const CONF_THRES = 0.25;         // sube a 0.4 si salen falsos positivos
-const CLASS_NAME = ["Puente"];   // tu única clase
+const INPUT_SIZE = 512;          // Debe coincidir con imgsz al exportar ONNX
+const CONF_THRES = 0.25;         // Sube a 0.4 si hay falsos positivos
+const CLASS_NAME = ["Puente"];   // 1 clase
 
 let session = null;
 let stream = null;
 let running = false;
 
-// Para mejorar compatibilidad de WASM en CDN
-ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/";
+function status(msg) {
+  statusEl.textContent = msg;
+  console.log("[STATUS]", msg);
+}
+
+// Para mejorar compatibilidad WASM en CDN
+if (typeof ort !== "undefined" && ort.env && ort.env.wasm) {
+  ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/";
+}
+
+// Debug inicial
+status("JS cargado ✅. Esperando 'Iniciar cámara'...");
+console.log("MODEL_URL =", MODEL_URL);
+console.log("UserAgent =", navigator.userAgent);
+console.log("isSecureContext =", window.isSecureContext);
+console.log("mediaDevices =", !!navigator.mediaDevices);
 
 btnStart.onclick = async () => {
+  status("Click detectado ✅ (iniciando...)");
+  console.log("CLICK start");
+
   try {
     btnStart.disabled = true;
+
+    // Chequeo rápido de cámara
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error("Tu navegador no soporta getUserMedia (cámara). Usa Chrome/Edge y HTTPS.");
+    }
+    if (!window.isSecureContext) {
+      throw new Error("La cámara requiere HTTPS (o localhost). Abre la URL de GitHub Pages, no github.com.");
+    }
+
+    // 1) Cargar modelo
     status("Cargando modelo...");
     if (!session) {
-      // WebGL suele ser más rápido; si falla, cae a wasm
+      // Intenta WebGL primero, si falla cae a WASM
       session = await ort.InferenceSession.create(MODEL_URL, {
         executionProviders: ["webgl", "wasm"],
         graphOptimizationLevel: "all",
       });
+      console.log("ONNX session creada ✅");
+      console.log("Input names:", session.inputNames);
+      console.log("Output names:", session.outputNames);
+    } else {
+      console.log("ONNX session ya existente ✅");
     }
 
-    status("Pidiendo cámara...");
+    // 2) Pedir cámara
+    status("Pidiendo cámara (permiso)...");
     stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: "environment" },
       audio: false
     });
 
+    console.log("Stream OK ✅", stream.getTracks().map(t => `${t.kind}:${t.label}`));
+
     video.srcObject = stream;
     await video.play();
 
+    // 3) Loop
     running = true;
     btnStop.disabled = false;
     status("Corriendo detección...");
     requestAnimationFrame(loop);
+
   } catch (e) {
     console.error(e);
-    status("Error: " + (e?.message || e));
+    const name = e?.name ? `${e.name} - ` : "";
+    status("ERROR: " + name + (e?.message || String(e)));
     btnStart.disabled = false;
   }
 };
@@ -53,6 +97,7 @@ btnStop.onclick = () => {
   running = false;
   btnStop.disabled = true;
   btnStart.disabled = false;
+
   if (stream) {
     stream.getTracks().forEach(t => t.stop());
     stream = null;
@@ -60,14 +105,13 @@ btnStop.onclick = () => {
   status("Detenido.");
 };
 
-function status(msg) { statusEl.textContent = msg; }
-
 function resizeCanvasToVideo() {
   const vw = video.videoWidth || 0;
   const vh = video.videoHeight || 0;
   if (vw && vh && (canvas.width !== vw || canvas.height !== vh)) {
     canvas.width = vw;
     canvas.height = vh;
+    console.log("Canvas resized:", canvas.width, canvas.height);
   }
 }
 
@@ -81,7 +125,7 @@ function letterboxToSquare(srcW, srcH, dstSize) {
   return { r, newW, newH, padX, padY };
 }
 
-// Convierte frame actual a tensor [1,3,INPUT,INPUT] float32
+// Convierte frame a tensor [1,3,INPUT,INPUT] float32
 function frameToTensor() {
   const vw = video.videoWidth;
   const vh = video.videoHeight;
@@ -122,7 +166,7 @@ function frameToTensor() {
 }
 
 function drawDetections(dets) {
-  // dibuja video
+  // video
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
   // boxes
@@ -149,17 +193,16 @@ function drawDetections(dets) {
   }
 }
 
-// Convierte coords del output a coords en el canvas (deshace letterbox)
+// Deshace letterbox y mapea a canvas
 function unletterboxBox(x1, y1, x2, y2, lb, vw, vh) {
-  // output puede venir normalizado (0..1) o en pixels (0..INPUT_SIZE)
-  // heurística:
+  // heurística para normalizado
   const normalized = (x2 <= 1.5 && y2 <= 1.5);
 
   if (normalized) {
     x1 *= INPUT_SIZE; y1 *= INPUT_SIZE; x2 *= INPUT_SIZE; y2 *= INPUT_SIZE;
   }
 
-  // deshace padding
+  // quitar padding
   x1 = (x1 - lb.padX) / lb.r;
   x2 = (x2 - lb.padX) / lb.r;
   y1 = (y1 - lb.padY) / lb.r;
@@ -178,7 +221,9 @@ function unletterboxBox(x1, y1, x2, y2, lb, vw, vh) {
   return { x1: x1 * sx, y1: y1 * sy, x2: x2 * sx, y2: y2 * sy };
 }
 
-async function loop() {
+let lastLog = 0;
+
+async function loop(ts) {
   if (!running) return;
 
   try {
@@ -193,15 +238,20 @@ async function loop() {
 
     const { tensor, lb } = frameToTensor();
 
-    // nombre del input: a veces "images", a veces "input", etc.
-    // así lo tomamos genérico:
     const feeds = {};
     const inputName = session.inputNames[0];
     feeds[inputName] = tensor;
 
     const out = await session.run(feeds);
     const outName = session.outputNames[0];
+
     const raw = out[outName].data; // Float32Array tamaño 1*300*6
+
+    // Log cada ~2s para no spamear
+    if (ts - lastLog > 2000) {
+      console.log("Output sample:", raw.slice(0, 12)); // 2 detecciones
+      lastLog = ts;
+    }
 
     const dets = [];
     for (let i = 0; i < 300; i++) {
@@ -213,4 +263,23 @@ async function loop() {
       const score = raw[base + 4];
       const cls = Math.round(raw[base + 5]);
 
-      if (score >
+      if (score >= CONF_THRES) {
+        const b = unletterboxBox(x1, y1, x2, y2, lb, vw, vh);
+        dets.push({ ...b, score, cls });
+      }
+    }
+
+    drawDetections(dets);
+  } catch (e) {
+    console.error(e);
+    const name = e?.name ? `${e.name} - ` : "";
+    status("Error en inferencia: " + name + (e?.message || String(e)));
+    running = false;
+    btnStop.disabled = true;
+    btnStart.disabled = false;
+    return;
+  }
+
+  requestAnimationFrame(loop);
+}
+
