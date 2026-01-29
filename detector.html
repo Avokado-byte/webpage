@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Detector Puente (YOLO ONNX)</title>
+  <style>
+    html, body { margin: 0; padding: 0; background: #000; height: 100%; overflow: hidden; }
+    #wrap { position: relative; width: 100vw; height: 100vh; }
+    video, canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+    #hud {
+      position: absolute; left: 12px; top: 12px;
+      color: #fff; font: 14px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      background: rgba(0,0,0,.45); padding: 10px 12px; border-radius: 10px;
+      max-width: calc(100% - 24px);
+    }
+    #hud button {
+      border: 0; padding: 8px 10px; border-radius: 10px; cursor: pointer;
+      margin-right: 8px;
+    }
+    #status { opacity: .9; margin-top: 6px; }
+    a { color: #9fd3ff; }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas"></canvas>
+
+    <div id="hud">
+      <div>
+        <button id="btnStart">Iniciar cámara</button>
+        <button id="btnStop" disabled>Detener</button>
+        <a href="./index.html">Volver</a>
+      </div>
+      <div id="status">Listo.</div>
+    </div>
+  </div>
+
+  <!-- ONNX Runtime Web (CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+  <script src="./detector.js"></script>
+</body>
+</html>
